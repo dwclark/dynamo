@@ -1,4 +1,4 @@
-@Grab('software.amazon.awssdk:dynamodb:2.31.41')
+@Grab('com.amazonaws:DynamoDBLocal:2.6.0') // or at project level @Grab('software.amazon.awssdk:dynamodb:2.31.41')
 import software.amazon.awssdk.core.waiters.WaiterResponse
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient
 import software.amazon.awssdk.services.dynamodb.model.*

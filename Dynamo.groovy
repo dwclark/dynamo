@@ -1,4 +1,3 @@
-@Grab('com.amazonaws:DynamoDBLocal:2.6.0')
 import java.nio.ByteBuffer
 import software.amazon.awssdk.core.SdkBytes
 import software.amazon.awssdk.core.waiters.WaiterResponse

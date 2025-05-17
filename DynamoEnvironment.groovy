@@ -1,4 +1,3 @@
-@Grab('com.amazonaws:DynamoDBLocal:2.6.0')
 import groovy.grape.Grape
 import software.amazon.awssdk.regions.Region
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient
