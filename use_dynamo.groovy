@@ -11,63 +11,97 @@ def builder = DynamoEnvironment.builder().tap {
     useGrapeClasspath()
 }
 
-try(def env = builder.inMemory()) {
-    def dynamo = new Dynamo(env.client)
+def demoSingleKey = { Dynamo dynamo ->
+    final Map customerKey = [customerId: UUID.randomUUID()]
+    assert !dynamo.listTables()
 
-    final customerKey = [customerId: UUID.randomUUID()]
-    assert [] == dynamo.listTables()
+    //Demo table creation with a single primary key
     dynamo.createTable("Customers", [entry("customerId", String)])
 
+    //Use the table view to always do work with same table
     def table = dynamo.forTable("Customers")
+
+    //put and get customer data, put is always an insert
     table.put(customerKey + [name: 'David', address: '123 Main', age: 100])
     println table.get(customerKey)
+
+    //show upsert functionality, in this case since the key exists it will
+    //be an update. All attributes will be set for the customerKey
     table.upsert {
 	key customerKey
 	attributes name: 'Sam', address: '456 My Way', age: 40
     }
     println table.get(customerKey)
-    println table.query { keyCondition "customerId = ${customerKey.customerId}" } as List
 
-    final withUpsert = [customerId: UUID.randomUUID()]
-    def person = [name: 'Benny', address: '1600 Pennsylvania Ave', age: 65]
-    table.upsert {
-	key withUpsert
-	expression "set ${alias(name)} = ${person.name}, ${alias(address)} = ${person.address}, ${alias(age)} = ${person.age}"
-    }
+    //get the same information via the query interface
+    println table.query { keyCondition "${alias(customerId)} = ${customerKey.customerId}" } as List
 
-    println table.get(withUpsert)
-    person = [name: 'Obama', address: '1600 Pennsylvania Ave', age: 65]
+    //show usage of upsert to insert a customer
+    final Map upsertKey = [customerId: UUID.randomUUID()]
     table.upsert {
-	key withUpsert
-	attributes person
+	key upsertKey
+	attributes name: 'Benny', address: '1600 Pennsylvania Ave', age: 65
     }
+    println table.get(upsertKey)
+
+    //Now use upsert as an update
+    //Use dynamo update expression to change the name and remove the age attribute
+    final Map change = [name: 'Lenny']
+    table.upsert {
+	key upsertKey
+	expression "set ${alias(name)} = ${change.name} remove ${alias(age)}"
+    }
+    println table.get(upsertKey)
     
-    println table.get(withUpsert)
     table.delete()
+}
 
-    //now try with sort keys
+def demoMultipleKeys = { Dynamo dynamo ->
+    assert !dynamo.listTables().find { name -> name == "Invoices" }
+    
+    //create a table with a primary key and a sort key
     dynamo.createTable("Invoices", [entry("pk", String), entry("sk", String)])
+
+    //Change the default numeric conversion and get a table view
+    //By default all numbers are left as BigDecimal because BigDecimal can handle any number
+    //SMALLEST attempts to use the smallest representation for numbers
     def invoices = dynamo.newConversions(Dynamo.NumberConversion.SMALLEST).forTable("Invoices")
+
+    //insert some data into the invoices table
     def invoiceId = UUID.randomUUID()
     invoices.put(pk: invoiceId, sk: "#d", date: '2025-11-01', terms: 'net 30', customer: 'blue man group')
     invoices.put(pk: invoiceId, sk: "#li1", quantity: 1, price: 100.25, description: 'blocks')
     invoices.put(pk: invoiceId, sk: "#li2", quantity: 20, price: 5.05, description: 'stuff')
+
+    //get a listing of line items for that invoice, along with their prices
+    //Note, queries and scans return an iterable because the data set may be
+    //very large. Iterable will automatically paginate results. If you want it
+    //all at once, cast the Iterable to a List.
     def iterable = invoices.query {
 	projection "${alias(sk)},${alias(price)}"
 	keyCondition "${alias(pk)} = ${invoiceId} AND begins_with(${alias(sk)}, ${'#li'})"
     }
     iterable.each { println it }
 
+    //Use the scan functionality to show every item in the invoices table
     println "doing full invoices scan"
     invoices.scan().each { println it }
-	
-    println "doing filtered scan for expensive line items"
 
+    //Use filtering and projection to only retrieve certain attributes
+    //where the filter criteria matches
+    //This is requires the same work on the server (since all items are scanned),
+    //but reduces the I/O since only some items are brought back
+    println "doing filtered scan for expensive line items"
     invoices.scan {
 	projection "${alias(quantity)},${alias(price)}"
 	filter "begins_with(${alias(sk)}, ${'#li'}) AND ${alias(price)} > ${20}"
     }.each {
 	println it
     }
+}
 
+try(def env = builder.inMemory()) {
+    def dynamo = new Dynamo(env.client)
+    demoSingleKey dynamo
+    demoMultipleKeys dynamo
 }
