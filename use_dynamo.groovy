@@ -6,14 +6,6 @@
 @Grab('com.amazonaws:DynamoDBLocal:2.6.0') // or at project level @Grab('software.amazon.awssdk:dynamodb:2.31.41')
 import static java.util.Map.entry
 
-//Manages a local dynamo environment. If you are hitting an actual Dynamo instance
-//in AWS, you would just configure the client directly
-def builder = DynamoEnvironment.builder().tap {
-    port 12500
-    shared false
-    useGrapeClasspath()
-}
-
 def demoSingleKey = { Dynamo dynamo ->
     final Map customerKey = [customerId: UUID.randomUUID()]
     assert !dynamo.listTables()
@@ -106,6 +98,14 @@ def demoMultipleKeys = { Dynamo dynamo ->
     }.each {
 	println it
     }
+}
+
+//Manages a local dynamo environment. If you are hitting an actual Dynamo instance
+//in AWS, you would just configure the client directly
+def builder = DynamoEnvironment.builder().tap {
+    port 12500
+    shared false
+    useGrapeClasspath()
 }
 
 //Fire up the local dynamo environment and then get the auto-configured client
