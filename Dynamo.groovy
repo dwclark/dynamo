@@ -189,9 +189,9 @@ class Dynamo {
 	    tableName name
 	}
 
-	def tableRequest = DescribeTableRequest.builder()
-            .tableName(name)
-            .build()
+	def tableRequest = build(DescribeTableRequest) {
+            tableName name
+	}
 	
 	// Wait until the Amazon DynamoDB table is created.
 	def roe = dbWaiter.waitUntilTableExists(tableRequest).matched()
