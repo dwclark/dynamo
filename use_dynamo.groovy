@@ -5,6 +5,8 @@ import software.amazon.awssdk.services.dynamodb.model.*
 import software.amazon.awssdk.services.dynamodb.waiters.DynamoDbWaiter
 import static java.util.Map.entry
 
+//Manages a local dynamo environment. If you are hitting an actual Dynamo instance
+//in AWS, you would just configure the client directly
 def builder = DynamoEnvironment.builder().tap {
     port 12500
     shared false
@@ -100,6 +102,12 @@ def demoMultipleKeys = { Dynamo dynamo ->
     }
 }
 
+//Fire up the local dynamo environment and then get the auto-configured client
+//The Dynamo instance doesn't care where the client comes from, it just needs
+//a pre-configured DynamoDbClient.
+//DynamoDbClient is completely thread safe, so create as many Dynamo instances
+//and as many Table views as needed and they can all safely share
+//the same DynamoDbClient without issues.
 try(def env = builder.inMemory()) {
     def dynamo = new Dynamo(env.client)
     demoSingleKey dynamo
