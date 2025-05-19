@@ -48,10 +48,10 @@ def demoSingleKey = { Dynamo dynamo ->
 
     //Now use upsert as an update
     //Use dynamo update expression to change the name and remove the age attribute
-    final Map change = [name: 'Lenny']
+    final Map lenny = [name: 'Lenny']
     table.upsert {
 	key upsertKey
-	expression "set ${alias(name)} = ${change.name} remove ${alias(age)}"
+	expression "set ${alias(name)} = ${lenny.name} remove ${alias(age)}"
     }
     println table.get(upsertKey)
     
