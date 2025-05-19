@@ -81,10 +81,15 @@ def demoMultipleKeys = { Dynamo dynamo ->
     //very large. Iterable will automatically paginate results. If you want it
     //all at once, cast the Iterable to a List.
     def iterable = invoices.query {
-	projection "${alias(sk)},${alias(price)}"
+	projection "${alias(sk)}, ${alias(price)}, ${alias(quantity)}"
 	keyCondition "${alias(pk)} = ${invoiceId} AND begins_with(${alias(sk)}, ${'#li'})"
     }
-    iterable.each { println it }
+
+    //iterate the results, make sure numeric types have been converted to the smallest representation
+    iterable.each { lineItem ->
+	assert lineItem.quantity instanceof Integer && lineItem.price instanceof BigDecimal
+	println lineItem
+    }
 
     //Use the scan functionality to show every item in the invoices table
     println "doing full invoices scan"
