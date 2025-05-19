@@ -77,7 +77,7 @@ def demoMultipleKeys = { Dynamo dynamo ->
     invoices.put(pk: invoiceId, sk: "#li2", quantity: 20, price: 5.05, description: 'stuff')
 
     //get a listing of line items for that invoice, along with their prices
-    //Note, queries and scans return an iterable because the data set may be
+    //Note, queries and scans return an iterable because the dataset may be
     //very large. Iterable will automatically paginate results. If you want it
     //all at once, cast the Iterable to a List.
     def iterable = invoices.query {
