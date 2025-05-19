@@ -1,8 +1,9 @@
+//Although we have to import the local dependency to make sure
+//the dynamo libraries are present, the Dynamo class fully hides
+//all of the dynamo model. Because of this, the script can be
+//written using nothing but groovy strings, closures, and standard
+//java types such as Map, List, String, etc.
 @Grab('com.amazonaws:DynamoDBLocal:2.6.0') // or at project level @Grab('software.amazon.awssdk:dynamodb:2.31.41')
-import software.amazon.awssdk.core.waiters.WaiterResponse
-import software.amazon.awssdk.services.dynamodb.DynamoDbClient
-import software.amazon.awssdk.services.dynamodb.model.*
-import software.amazon.awssdk.services.dynamodb.waiters.DynamoDbWaiter
 import static java.util.Map.entry
 
 //Manages a local dynamo environment. If you are hitting an actual Dynamo instance
