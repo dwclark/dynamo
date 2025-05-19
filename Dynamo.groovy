@@ -1,11 +1,11 @@
 import java.nio.ByteBuffer
+import java.util.Map.Entry
 import software.amazon.awssdk.core.SdkBytes
+import software.amazon.awssdk.core.pagination.sync.SdkIterable
 import software.amazon.awssdk.core.waiters.WaiterResponse
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient
 import software.amazon.awssdk.services.dynamodb.model.*
 import software.amazon.awssdk.services.dynamodb.waiters.DynamoDbWaiter
-import software.amazon.awssdk.core.pagination.sync.SdkIterable
-import java.util.Map.Entry
 
 class Dynamo {
 
