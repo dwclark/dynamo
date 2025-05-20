@@ -4,7 +4,11 @@
 //written using nothing but groovy strings, closures, and standard
 //java types such as Map, List, String, etc.
 @Grab('com.amazonaws:DynamoDBLocal:2.6.0') // or at project level @Grab('software.amazon.awssdk:dynamodb:2.31.41')
+@Grab('net.datafaker:datafaker:2.4.3')
 import static java.util.Map.entry
+import net.datafaker.Faker
+
+final Faker faker = new Faker()
 
 def demoSingleKey = { Dynamo dynamo ->
     final Map customerKey = [customerId: UUID.randomUUID()]
@@ -101,15 +105,57 @@ def demoMultipleKeys = { Dynamo dynamo ->
 	println it
     }
 
-    //read the whole invoice transactionally
-    List<Map<String,Object>> list = dynamo.readTransaction {
-	get('Invoices', [pk: invoiceId, sk: "#d"])
-	get('Invoices', [pk: invoiceId, sk: "#li1"])
-	get('Invoices', [pk: invoiceId, sk: "#li2"])
+    invoices.delete()
+}
+
+def demoTransactions = { Dynamo dynamo ->
+    //create two tables
+    //create a table with a primary key and a sort key
+    dynamo.createTable("People", [entry("id", String)])
+    dynamo.createTable("Addresses", [entry("id", String)])
+
+    final personId = UUID.randomUUID()
+    final addressIds = []
+    final addr = faker.address()
+    final name = faker.name()
+
+    //Dynamo multi-table/multi-row transaction
+    dynamo.writeTransaction {
+	put "People", [id: personId, first: name.firstName(), last: name.lastName(), ssn: faker.numerify('### ## ####')]
+	5.times {
+	    def uuid = UUID.randomUUID()
+	    addressIds << uuid
+	    upsert "Addresses", {
+		key(id: uuid)
+		attributes(personId: personId, street: addr.streetAddress(),
+			   city: addr.city(), state: addr.stateAbbr(),
+			   zip: addr.zipCode())
+	    }
+	}
     }
 
-    list.each { println it }
+    println "All persons and addresses"
+    //Dynamo multi-table/multi-row read transaction
+    List<Map<String,Object>> all = dynamo.readTransaction {
+	get 'People', [id: personId]
+	addressIds.each { addrId -> get 'Addresses', [id: addrId] }
+    }
+    
+    all.each { println it }
+    assert all.size() == 6
 
+    //Delete first two addresses we created
+    dynamo.writeTransaction {
+	delete 'Addresses', [id: addressIds[0]]
+	delete 'Addresses', [id: addressIds[1]]
+    }
+
+    List<Map<String,Object>> reduced = dynamo.readTransaction {
+	addressIds.each { addrId -> get 'Addresses', [id: addrId] }
+    }
+
+    //returns empty maps when id is not found, remove empty maps for count
+    assert reduced.findAll { it }.size() == 3
 }
 
 //Manages a local dynamo environment. If you are hitting an actual Dynamo instance
@@ -130,4 +176,5 @@ try(def env = builder.inMemory()) {
     def dynamo = new Dynamo(env.client)
     demoSingleKey dynamo
     demoMultipleKeys dynamo
+    demoTransactions dynamo
 }

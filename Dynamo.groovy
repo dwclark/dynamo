@@ -63,7 +63,8 @@ class Dynamo {
 		   (DeleteTableRequest): client.&deleteTable,
 		   (CreateTableRequest): client.&createTable,
 		   (DeleteItemRequest): client.&deleteItem,
-		   (TransactGetItemsRequest): client.&transactGetItems)
+		   (TransactGetItemsRequest): client.&transactGetItems,
+		   (TransactWriteItemsRequest): client.&transactWriteItems)
     
     Dynamo(DynamoDbClient client, NumberConversion nc = NumberConversion.DECIMAL) {
 	this.client = client
@@ -399,7 +400,36 @@ class Dynamo {
 	}
     }
 
-    List<Map<String,Object>> readTransaction(@DelegatesTo(ReadTransaction) config) {
+    private class Write implements WriteTransaction {
+	List<TransactWriteItem> items = []
+	
+	void put(String table, Map<String,Object> keys) {
+	    def item = builder(TransactWriteItem) {
+		put(putter(Put, table, keys).build())
+	    }
+
+	    items << item.build()
+	}
+	
+	void upsert(String table, Closure config) {
+	    def item = builder(TransactWriteItem) {
+		update(upserter(Update, table, config).build())
+	    }
+
+	    items << item.build()
+	}
+	
+	void delete(String table, Map<String,Object> keys) {
+	    def item = builder(TransactWriteItem) {
+		delete(deleter(Delete, table, keys).build())
+	    }
+
+	    items << item.build()
+	}
+    }
+
+
+    List<Map<String,Object>> readTransaction(@DelegatesTo(ReadTransaction) Closure config) {
 	final Read read = new Read()
 	config.setDelegate(read)
 	config.setResolveStrategy(Closure.DELEGATE_FIRST)
@@ -410,5 +440,18 @@ class Dynamo {
 	}
 		
 	exec(tgir.build()).responses().collect { unwrap(it.item()) }
+    }
+
+    void writeTransaction(@DelegatesTo(WriteTransaction) Closure config) {
+	final Write write = new Write()
+	config.setDelegate(write)
+	config.setResolveStrategy(Closure.DELEGATE_FIRST)
+	config.call()
+
+	final twir = builder(TransactWriteItemsRequest) {
+	    transactItems write.items
+	}
+
+	exec(twir.build())
     }
 }
