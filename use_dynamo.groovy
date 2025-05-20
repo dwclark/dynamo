@@ -47,7 +47,9 @@ def demoSingleKey = { Dynamo dynamo ->
 	expression "set ${alias(name)} = ${lenny.name} remove ${alias(age)}"
     }
     println table.get(upsertKey)
-    
+
+    table.delete(customerKey)
+    table.delete(upsertKey)
     table.delete()
 }
 
@@ -98,6 +100,16 @@ def demoMultipleKeys = { Dynamo dynamo ->
     }.each {
 	println it
     }
+
+    //read the whole invoice transactionally
+    List<Map<String,Object>> list = dynamo.readTransaction {
+	get('Invoices', [pk: invoiceId, sk: "#d"])
+	get('Invoices', [pk: invoiceId, sk: "#li1"])
+	get('Invoices', [pk: invoiceId, sk: "#li2"])
+    }
+
+    list.each { println it }
+
 }
 
 //Manages a local dynamo environment. If you are hitting an actual Dynamo instance

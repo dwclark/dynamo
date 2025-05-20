@@ -6,20 +6,22 @@ import software.amazon.awssdk.core.waiters.WaiterResponse
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient
 import software.amazon.awssdk.services.dynamodb.model.*
 import software.amazon.awssdk.services.dynamodb.waiters.DynamoDbWaiter
+import software.amazon.awssdk.utils.builder.SdkBuilder
 
 class Dynamo {
 
-    private Object build(Class type, Closure closure) {
+    private static final int MAX_TRANSACTION_ITEMS = 100
+    
+    private SdkBuilder builder(Class type, Closure closure) {
 	def builder = type.builder()
 	closure.setDelegate(builder)
 	closure.setResolveStrategy(Closure.DELEGATE_FIRST)
 	closure.call(builder)
-	return builder.build()
+	return builder
     }
     
-    private Object exec(Class type, Closure closure) {
-	def req = build(type, closure)
-	Closure func = reqMap[type]
+    private Object exec(DynamoDbRequest req) {
+	Closure func = reqMap[req.getClass()]
 	func.call(req)
     }
 
@@ -59,7 +61,9 @@ class Dynamo {
 		   (PutItemRequest): client.&putItem,
 		   (QueryRequest): client.&query,
 		   (DeleteTableRequest): client.&deleteTable,
-		   (CreateTableRequest): client.&createTable)
+		   (CreateTableRequest): client.&createTable,
+		   (DeleteItemRequest): client.&deleteItem,
+		   (TransactGetItemsRequest): client.&transactGetItems)
     
     Dynamo(DynamoDbClient client, NumberConversion nc = NumberConversion.DECIMAL) {
 	this.client = client
@@ -166,63 +170,34 @@ class Dynamo {
 	return vals.inject([:]) { accum, k, v -> accum << new MapEntry(k, attr(v)) }
     }
 
-    List<String> listTables() { 
-	def request = ListTablesRequest.builder().build()
-	return client.listTables(request).tableNames()
-    }
-    
-    void createTable(String name, List<Entry<String,Class>> keys) {
-	DynamoDbWaiter dbWaiter = client.waiter()
-	def attrDefs = keys.collect { e ->
-	    AttributeDefinition.builder().attributeName(e.key).attributeType(scalars(e.value)).build()
+    private SdkBuilder getter(Class type, String table, Map<String,Object> keys) {
+	builder(type) {
+	    key wrap(keys)
+	    tableName table
 	}
-
-	int index = 0
-	def schemas = keys.collect { e ->
-	    KeySchemaElement.builder().attributeName(e.key).keyType(index++ ? KeyType.RANGE : KeyType.HASH).build()
-	}
-	
-	def resp = exec(CreateTableRequest) {
-	    attributeDefinitions attrDefs
-	    keySchema schemas
-	    billingMode BillingMode.PAY_PER_REQUEST
-	    tableName name
-	}
-
-	def tableRequest = build(DescribeTableRequest) {
-            tableName name
-	}
-	
-	// Wait until the Amazon DynamoDB table is created.
-	def roe = dbWaiter.waitUntilTableExists(tableRequest).matched()
-	if(roe.exception().present)
-	    throw roe.exception().get()
     }
 
-    void put(String table, Map<String,Object> map) {
-	exec(PutItemRequest) {
+    private SdkBuilder putter(Class type, String table, Map<String,Object> map) {
+	builder(type) {
             tableName table
 	    item wrap(map)
 	}
     }
-
-    Map<String,Object> get(String table, Map<String,Object> keys) {
-	def resp = exec(GetItemRequest) {
-	    key wrap(keys)
+    
+    private SdkBuilder deleter(Class type, String table, Map<String,Object> keys) {
+	builder(type) {
 	    tableName table
+	    key wrap(keys)
 	}
-
-	return unwrap(resp.item())
     }
 
-    
-    void upsert(String table, @DelegatesTo(SmartUpsert) Closure config) {
+    private SdkBuilder upserter(Class type, String table, @DelegatesTo(SmartUpsert) Closure config) {
 	SmartUpsert sa = new SmartUpsert()
 	config.setDelegate(sa)
 	config.setResolveStrategy(Closure.DELEGATE_FIRST)
 	config.call()
 	
-	exec(UpdateItemRequest) {
+	builder(type) {
 	    tableName table
 	    key wrap(sa.__key)
 	    updateExpression sa.__updateExpression
@@ -233,7 +208,59 @@ class Dynamo {
 	    }
 	}
     }
+    
+    List<String> listTables() { 
+	def request = ListTablesRequest.builder().build()
+	return client.listTables(request).tableNames()
+    }
+    
+    void createTable(String name, List<Entry<String,Class>> keys) {
+	DynamoDbWaiter dbWaiter = client.waiter()
+	def attrDefs = keys.collect { e ->
+	    AttributeDefinition.builder().attributeName(e.key).attributeType(scalars(e.value)).build()
+	}
+	
+	int index = 0
+	def schemas = keys.collect { e ->
+	    KeySchemaElement.builder().attributeName(e.key).keyType(index++ ? KeyType.RANGE : KeyType.HASH).build()
+	}
+	
+	def ctb = builder(CreateTableRequest) {
+	    attributeDefinitions attrDefs
+	    keySchema schemas
+	    billingMode BillingMode.PAY_PER_REQUEST
+	    tableName name
+	}
+	
+	exec(ctb.build())
+	
+	def tb = builder(DescribeTableRequest) {
+            tableName name
+	}
+	
+	// Wait until the Amazon DynamoDB table is created.
+	def roe = dbWaiter.waitUntilTableExists(tb.build()).matched()
+	if(roe.exception().present)
+	    throw roe.exception().get()
+    }
+    
+    void put(String table, Map<String,Object> map) {
+	exec(putter(PutItemRequest, table, map).build())
+    }
 
+    Map<String,Object> get(String table, Map<String,Object> keys) {
+	def gib = getter(GetItemRequest, table, keys)
+	return unwrap(exec(gib.build()).item())
+    }
+    
+    void upsert(String table, @DelegatesTo(SmartUpsert) Closure config) {
+	exec(upserter(UpdateItemRequest, table, config).build())
+    }
+
+    void delete(String table, Map<String,Object> keys) {
+	exec(deleter(DeleteItemRequest, table, keys).build())
+    }
+	
     private class DynamoIterable implements Iterable<Map<String,Object>> {
 	private final SdkIterable<Map<String,Object>> sdkIter
 
@@ -256,7 +283,7 @@ class Dynamo {
 	config.setResolveStrategy(Closure.DELEGATE_FIRST)
 	config.call()
 	
-	def req = build(QueryRequest) {
+	def qrb = builder(QueryRequest) {
 	    tableName table
 	    keyConditionExpression sq.__expr
 	    if(sq.__index)
@@ -269,7 +296,7 @@ class Dynamo {
 		expressionAttributeValues wrap(sq.__params)
 	}
 
-	return new DynamoIterable(client.queryPaginator(req).items())
+	return new DynamoIterable(client.queryPaginator(qrb.build()).items())
     }
 
     Iterable<Map<String,Object>> scan(String table) {
@@ -282,7 +309,7 @@ class Dynamo {
 	config.setResolveStrategy(Closure.DELEGATE_FIRST)
 	config.call()
 	
-	def req = build(ScanRequest) {
+	def srb = builder(ScanRequest) {
 	    tableName table
 	    if(ss.__index)
 		indexName ss.__index
@@ -296,13 +323,15 @@ class Dynamo {
 		expressionAttributeValues wrap(ss.__params)
 	}
 
-	return new DynamoIterable(client.scanPaginator(req).items())
+	return new DynamoIterable(client.scanPaginator(srb.build()).items())
     }
 
     void deleteTable(String table) {
-	exec(DeleteTableRequest) {
+	def dtb = builder(DeleteTableRequest) {
 	    tableName table
 	}
+
+	exec(dtb.build())
     }
     
     interface Table {
@@ -312,7 +341,18 @@ class Dynamo {
 	Iterable<Map<String,Object>> query(@DelegatesTo(SmartQuery) Closure config)
 	Iterable<Map<String,Object>> scan()
 	Iterable<Map<String,Object>> scan(@DelegatesTo(SmartScan) Closure config)
+	void delete(Map<String,Object> key)
 	void delete()
+    }
+
+    interface ReadTransaction {
+	void get(String table, Map<String,Object> keys)
+    }
+
+    interface WriteTransaction {
+	void put(String table, Map<String,Object> map)
+	void upsert(String table, @DelegatesTo(SmartUpsert) Closure config)
+	void delete(String table, Map<String,Object> key)
     }
     
     Table forTable(final String tableName) {
@@ -336,10 +376,39 @@ class Dynamo {
 	    Iterable<Map<String,Object>> scan(Closure config = { -> }) {
 		return scan(tableName, config)
 	    }
+
+	    void delete(Map<String,Object> key) {
+		delete(tableName, key)
+	    }
 	    
 	    void delete() {
 		deleteTable(tableName)
 	    }
 	}
+    }
+
+    private class Read implements ReadTransaction {
+	List<TransactGetItem> items = []
+	
+	void get(String table, Map<String,Object> keys) {
+	    def item = builder(TransactGetItem) {
+		get(getter(Get, table, keys).build())
+	    }
+
+	    items << item.build()
+	}
+    }
+
+    List<Map<String,Object>> readTransaction(@DelegatesTo(ReadTransaction) config) {
+	final Read read = new Read()
+	config.setDelegate(read)
+	config.setResolveStrategy(Closure.DELEGATE_FIRST)
+	config.call()
+	
+	final tgir = builder(TransactGetItemsRequest) {
+	    transactItems read.items
+	}
+		
+	exec(tgir.build()).responses().collect { unwrap(it.item()) }
     }
 }
