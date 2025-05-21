@@ -10,21 +10,17 @@ import software.amazon.awssdk.utils.builder.SdkBuilder
 
 class Dynamo {
 
-    private static final int MAX_TRANSACTION_ITEMS = 100
-    
-    private SdkBuilder builder(Class type, Closure closure) {
-	def builder = type.builder()
-	closure.setDelegate(builder)
-	closure.setResolveStrategy(Closure.DELEGATE_FIRST)
-	closure.call(builder)
-	return builder
-    }
-    
-    private Object exec(DynamoDbRequest req) {
-	Closure func = reqMap[req.getClass()]
-	func.call(req)
+    private <T> T delegateTo(T obj, Closure config) {
+	config.setDelegate(obj)
+	config.setResolveStrategy(Closure.DELEGATE_FIRST)
+	config.call()
+	return obj
     }
 
+    private SdkBuilder builder(Class type, Closure closure) {
+	return delegateTo(type.builder(), closure)
+    }
+    
     enum NumberConversion {
 	DECIMAL, DOUBLE, SMALLEST
     }
@@ -54,17 +50,6 @@ class Dynamo {
 		    (AttributeValue.Type.NUL): { av -> av.nul() },
 		    (AttributeValue.Type.S): { av -> av.s() },
 		    (AttributeValue.Type.SS): { av -> new LinkedHashSet(av.ss()) })
-    
-    private final Map<Class,Closure> reqMap =
-	Map.copyOf((UpdateItemRequest): client.&updateItem,
-		   (GetItemRequest): client.&getItem,
-		   (PutItemRequest): client.&putItem,
-		   (QueryRequest): client.&query,
-		   (DeleteTableRequest): client.&deleteTable,
-		   (CreateTableRequest): client.&createTable,
-		   (DeleteItemRequest): client.&deleteItem,
-		   (TransactGetItemsRequest): client.&transactGetItems,
-		   (TransactWriteItemsRequest): client.&transactWriteItems)
     
     Dynamo(DynamoDbClient client, NumberConversion nc = NumberConversion.DECIMAL) {
 	this.client = client
@@ -125,12 +110,6 @@ class Dynamo {
 	    .build()
     }
 
-    static Map<String,String> aliases(Map<String,Object> map) {
-	Map<String,String> ret = [:]
-	map.eachWithIndex { k, v, i -> ret["#a" + i] = k }
-	return ret
-    }
-
     private Class smallest(BigDecimal bd) {
 	if(bd.scale() > 0)
 	    return BigDecimal
@@ -171,97 +150,6 @@ class Dynamo {
 	return vals.inject([:]) { accum, k, v -> accum << new MapEntry(k, attr(v)) }
     }
 
-    private SdkBuilder getter(Class type, String table, Map<String,Object> keys) {
-	builder(type) {
-	    key wrap(keys)
-	    tableName table
-	}
-    }
-
-    private SdkBuilder putter(Class type, String table, Map<String,Object> map) {
-	builder(type) {
-            tableName table
-	    item wrap(map)
-	}
-    }
-    
-    private SdkBuilder deleter(Class type, String table, Map<String,Object> keys) {
-	builder(type) {
-	    tableName table
-	    key wrap(keys)
-	}
-    }
-
-    private SdkBuilder upserter(Class type, String table, @DelegatesTo(SmartUpsert) Closure config) {
-	SmartUpsert sa = new SmartUpsert()
-	config.setDelegate(sa)
-	config.setResolveStrategy(Closure.DELEGATE_FIRST)
-	config.call()
-	
-	builder(type) {
-	    tableName table
-	    key wrap(sa.__key)
-	    updateExpression sa.__updateExpression
-	    if(sa.__aliases)
-		expressionAttributeNames(sa.__aliases)
-	    if(sa.__params) {
-		expressionAttributeValues wrap(sa.__params)
-	    }
-	}
-    }
-    
-    List<String> listTables() { 
-	def request = ListTablesRequest.builder().build()
-	return client.listTables(request).tableNames()
-    }
-    
-    void createTable(String name, List<Entry<String,Class>> keys) {
-	DynamoDbWaiter dbWaiter = client.waiter()
-	def attrDefs = keys.collect { e ->
-	    AttributeDefinition.builder().attributeName(e.key).attributeType(scalars(e.value)).build()
-	}
-	
-	int index = 0
-	def schemas = keys.collect { e ->
-	    KeySchemaElement.builder().attributeName(e.key).keyType(index++ ? KeyType.RANGE : KeyType.HASH).build()
-	}
-	
-	def ctb = builder(CreateTableRequest) {
-	    attributeDefinitions attrDefs
-	    keySchema schemas
-	    billingMode BillingMode.PAY_PER_REQUEST
-	    tableName name
-	}
-	
-	exec(ctb.build())
-	
-	def tb = builder(DescribeTableRequest) {
-            tableName name
-	}
-	
-	// Wait until the Amazon DynamoDB table is created.
-	def roe = dbWaiter.waitUntilTableExists(tb.build()).matched()
-	if(roe.exception().present)
-	    throw roe.exception().get()
-    }
-    
-    void put(String table, Map<String,Object> map) {
-	exec(putter(PutItemRequest, table, map).build())
-    }
-
-    Map<String,Object> get(String table, Map<String,Object> keys) {
-	def gib = getter(GetItemRequest, table, keys)
-	return unwrap(exec(gib.build()).item())
-    }
-    
-    void upsert(String table, @DelegatesTo(SmartUpsert) Closure config) {
-	exec(upserter(UpdateItemRequest, table, config).build())
-    }
-
-    void delete(String table, Map<String,Object> keys) {
-	exec(deleter(DeleteItemRequest, table, keys).build())
-    }
-	
     private class DynamoIterable implements Iterable<Map<String,Object>> {
 	private final SdkIterable<Map<String,Object>> sdkIter
 
@@ -278,180 +166,337 @@ class Dynamo {
 	}
     }
 
-    Iterable<Map<String,Object>> query(String table, @DelegatesTo(SmartQuery) Closure config) {
-	final SmartQuery sq = new SmartQuery()
-	config.setDelegate(sq)
-	config.setResolveStrategy(Closure.DELEGATE_FIRST)
-	config.call()
+    private class TableImpl implements Ops.Table {
+	private final String __table
 	
-	def qrb = builder(QueryRequest) {
-	    tableName table
-	    keyConditionExpression sq.__expr
-	    if(sq.__index)
-		indexName sq.__index
-	    if(sq.__projection)
-		projectionExpression sq.__projection
-	    if(sq.__aliases)
-		expressionAttributeNames sq.__aliases
-	    if(sq.__params)
-		expressionAttributeValues wrap(sq.__params)
+	TableImpl(final String table) {
+	    __table = table
 	}
-
-	return new DynamoIterable(client.queryPaginator(qrb.build()).items())
-    }
-
-    Iterable<Map<String,Object>> scan(String table) {
-	return scan(table, { -> })
-    }
-
-    Iterable<Map<String,Object>> scan(String table, @DelegatesTo(SmartScan) Closure config) {
-	final SmartScan ss = new SmartScan()
-	config.setDelegate(ss)
-	config.setResolveStrategy(Closure.DELEGATE_FIRST)
-	config.call()
 	
-	def srb = builder(ScanRequest) {
-	    tableName table
-	    if(ss.__index)
-		indexName ss.__index
-	    if(ss.__projection)
-		projectionExpression ss.__projection
-	    if(ss.__filter)
-		filterExpression ss.__filter
-	    if(ss.__aliases)
-		expressionAttributeNames ss.__aliases
-	    if(ss.__params)
-		expressionAttributeValues wrap(ss.__params)
+	void put(Map<String,Object> map) {
+	    def req = builder(PutItemRequest) {
+		tableName __table
+		item wrap(map)
+	    }
+
+	    client.putItem(req.build())
+	}
+	
+	void put(Closure config) {
+	    final Ops.All all = Ops.delegateAll(config)
+	    def req = builder(PutItemRequest) {
+		tableName __table
+		if(all.__conditionExpression)
+		    conditionExpression all.__conditionExpression
+		item wrap(all.__attributes)
+		if(all.__aliases)
+		    expressionAttributeNames all.__aliases
+		if(all.__params)
+		    expressionAttributeValues wrap(all.__params)
+	    }
+
+	    client.putItem(req.build())
+	}
+	
+	Map<String,Object> get(Map<String,Object> keys) {
+	    def req = builder(GetItemRequest) {
+		tableName __table
+		key wrap(keys)
+	    }
+
+	    unwrap(client.getItem(req.build()).item())
 	}
 
-	return new DynamoIterable(client.scanPaginator(srb.build()).items())
-    }
+	Map<String,Object> get(Closure config) {
+	    Ops.All all = Ops.delegateAll(config)
+	    def req = builder(GetItemRequest) {
+		tableName __table
+		key wrap(all.__key)
+		if(all.__projectionExpression)
+		    projectionExpression all.__projectionExpression
+		if(all.__aliases)
+		    expressionAttributeNames all.__aliases
+		if(all.__params)
+		    expressionAttributeValues wrap(all.__params)
+	    }
 
-    void deleteTable(String table) {
-	def dtb = builder(DeleteTableRequest) {
-	    tableName table
+	    unwrap(client.getItem(req.build()).items())
+	}
+	
+	void upsert(Closure config) {
+	    final Ops.All all = Ops.delegateAll(config)
+	    all.convertAttributesToExpression()
+
+	    final b = builder(UpdateItemRequest) {
+		tableName __table
+		key wrap(all.__key)
+		updateExpression all.__upsertExpression
+		if(all.__conditionExpression)
+		    conditionExpression all.__conditionExpression
+		if(all.__aliases)
+		    expressionAttributeNames(all.__aliases)
+		if(all.__params) {
+		    expressionAttributeValues wrap(all.__params)
+		}
+	    }
+
+	    client.updateItem(b.build())
+	}
+	
+	Iterable<Map<String,Object>> query(Closure config) {
+	    final Ops.All all = Ops.delegateAll(config)
+	
+	    def req = builder(QueryRequest) {
+		tableName __table
+		keyConditionExpression all.__keyCondition
+		if(all.__index)
+		    indexName all.__index
+		if(all.__projection)
+		    projectionExpression all.__projection
+		if(all.__aliases)
+		    expressionAttributeNames all.__aliases
+		if(all.__params)
+		    expressionAttributeValues wrap(all.__params)
+	    }
+	    
+	    return new DynamoIterable(client.queryPaginator(req.build()).items())
+	}
+	
+	Iterable<Map<String,Object>> scan() {
+	    return scan { -> }
 	}
 
-	exec(dtb.build())
+	Iterable<Map<String,Object>> scan(Closure config) {
+	    final Ops.All all = Ops.delegateAll(config)
+	
+	    def req = builder(ScanRequest) {
+		tableName __table
+		if(all.__index)
+		    indexName all.__index
+		if(all.__projection)
+		    projectionExpression all.__projection
+		if(all.__filter)
+		    filterExpression all.__filter
+		if(all.__aliases)
+		    expressionAttributeNames all.__aliases
+		if(all.__params)
+		    expressionAttributeValues wrap(all.__params)
+	    }
+
+	    return new DynamoIterable(client.scanPaginator(req.build()).items())
+	}
+
+	void delete(Map<String,Object> keys) {
+	    def req = builder(DeleteItemRequest) {
+		tableName __table
+		key wrap(keys)
+	    }
+
+	    client.deleteItem(req.build())
+	}
+
+	void delete(Closure config) {
+	    final Ops.All all = Ops.delegateAll(config)
+	    
+	    def req = builder(DeleteItemRequest) {
+		tableName __table
+		key wrap(all.__keys)
+		if(all.__conditionExpression)
+		    conditionExpression all.__conditionExpression
+		if(all.__aliases)
+		    expressionAttributeNames(all.__aliases)
+		if(all.__params) {
+		    expressionAttributeValues wrap(all.__params)
+		}
+	    }
+	    
+	    client.deleteItem(req.build())
+	}
+
+	void delete() {
+	    def req = builder(DeleteTableRequest) {
+		tableName __table
+	    }
+
+	    client.deleteTable(req.build())
+	}
     }
     
-    interface Table {
-	void put(Map<String,Object> map)
-	Map<String,Object> get(Map<String,Object> keys)
-	void upsert(@DelegatesTo(SmartUpsert) Closure config)
-	Iterable<Map<String,Object>> query(@DelegatesTo(SmartQuery) Closure config)
-	Iterable<Map<String,Object>> scan()
-	Iterable<Map<String,Object>> scan(@DelegatesTo(SmartScan) Closure config)
-	void delete(Map<String,Object> key)
-	void delete()
+    Ops.Table forTable(final String tableName) {
+	return new TableImpl(tableName)
     }
 
-    interface ReadTransaction {
-	void get(String table, Map<String,Object> keys)
-    }
-
-    interface WriteTransaction {
-	void put(String table, Map<String,Object> map)
-	void upsert(String table, @DelegatesTo(SmartUpsert) Closure config)
-	void delete(String table, Map<String,Object> key)
+    List<String> listTables() { 
+	def request = ListTablesRequest.builder().build()
+	return client.listTables(request).tableNames()
     }
     
-    Table forTable(final String tableName) {
-	return new Table() {
-	    void put(Map<String,Object> map) {
-		put(tableName, map)
+    Ops.Table createTable(String name, List<Entry<String,Class>> keys) {
+	DynamoDbWaiter dbWaiter = client.waiter()
+	def attrDefs = keys.collect { e ->
+	    AttributeDefinition.builder().attributeName(e.key).attributeType(scalars(e.value)).build()
+	}
+	
+	int index = 0
+	def schemas = keys.collect { e ->
+	    KeySchemaElement.builder().attributeName(e.key).keyType(index++ ? KeyType.RANGE : KeyType.HASH).build()
+	}
+	
+	def ctb = builder(CreateTableRequest) {
+	    attributeDefinitions attrDefs
+	    keySchema schemas
+	    billingMode BillingMode.PAY_PER_REQUEST
+	    tableName name
+	}
+
+	client.createTable(ctb.build())
+	
+	def tb = builder(DescribeTableRequest) {
+            tableName name
+	}
+	
+	// Wait until the Amazon DynamoDB table is created.
+	def roe = dbWaiter.waitUntilTableExists(tb.build()).matched()
+	if(roe.exception().present)
+	    throw roe.exception().get()
+
+	return new TableImpl(name)
+    }
+
+    private class Read implements Ops.ReadTransaction {
+	final List<TransactGetItem> items = []
+
+	void get(Map<String,Object> keys, String table) {
+	    def req = builder(Get) {
+		tableName table
+		key wrap(keys)
 	    }
 	    
-	    Map<String,Object> get(Map<String,Object> keys) {
-		return get(tableName, keys)
+	    items << builder(TransactGetItem) { get req.build() }.build()
+	}
+	
+	void get(Closure config) {
+	    final Ops.All all = Ops.delegateAll(config)
+	    def ret = builder(Get) {
+		tableName __table
+		key wrap(all.__key)
+		if(all.__projectionExpression)
+		    projectionExpression all.__projectionExpression
+		if(all.__aliases)
+		    expressionAttributeNames all.__aliases
+		if(all.__params)
+		    expressionAttributeValues wrap(all.__params)
 	    }
+
+	    items << builder(TransactGetItem) { get req.build() }.build()
+	}
+    }
+
+    private class Write implements Ops.WriteTransaction {
+	final List<TransactWriteItem> items = []
+	final UUID token = UUID.randomUUID()
+
+	void check(Closure config) {
+	    final Ops.All all = Ops.delegateAll(config)
 	    
-	    void upsert(Closure config) {
-		upsert(tableName, config)
+	    final b = builder(ConditionCheck) {
+		tableName all.__table
+		key wrap(all.__key)
+		if(all.__conditionExpression)
+		    conditionExpression all.__conditionExpression
+		if(all.__aliases)
+		    expressionAttributeNames all.__aliases
+		if(all.__params)
+		    expressionAttributeValues wrap(all.__params)
 	    }
 
-	    Iterable<Map<String,Object>> query(Closure config) {
-		return query(tableName, config)
+	    items << builder(TransactWriteItem) { conditionCheck b.build() }.build()
+	}
+	
+	void put(Map<String,Object> map, String table) {
+	    final b = builder(Put) {
+		tableName table
+		item wrap(map)
 	    }
 
-	    Iterable<Map<String,Object>> scan(Closure config = { -> }) {
-		return scan(tableName, config)
+	    items << builder(TransactWriteItem) { put b.build() }.build()
+	}
+	
+	void put(Closure config) {
+	    final Ops.All all = Ops.delegateAll(config)
+	    final b = builder(Put) {
+		tableName all.__table
+		item wrap(all.__attributes)
+		if(all.__projection)
+		    projectionExpression all._projection
+		if(all.__aliases)
+		    expressionAttributeNames all.__aliases
+		if(all.__params)
+		    expressionAttributeValues wrap(all.__params)
 	    }
 
-	    void delete(Map<String,Object> key) {
-		delete(tableName, key)
+	    items << builder(TransactWriteItem) { put b.build() }.build()
+	}
+	
+	void upsert(Closure config) {
+	    final Ops.All all = Ops.delegateAll(config)
+	    all.convertAttributesToExpression()
+
+	    final b = builder(Update) {
+		tableName all.__table
+		key wrap(all.__key)
+		updateExpression all.__upsertExpression
+		if(all.__conditionExpression)
+		    conditionExpression all.__conditionExpression
+		if(all.__aliases)
+		    expressionAttributeNames all.__aliases
+		if(all.__params)
+		    expressionAttributeValues wrap(all.__params)
 	    }
-	    
-	    void delete() {
-		deleteTable(tableName)
+
+	    items << builder(TransactWriteItem) { update b.build() }.build()
+	}
+	
+	void delete(Map<String,Object> keys, String table) {
+	    final b = builder(Delete) {
+		tableName table
+		key wrap(keys)
 	    }
+
+	    items << builder(TransactWriteItem) { delete b.build() }.build()
+	}
+	
+	void delete(Closure config) {
+	    final Ops.All all = Ops.delegateAll(config)
+	    final b = builder(Delete) {
+		tableName all.__table
+		key wrap(all.__key)
+		if(all.__conditionExpression)
+		    conditionExpression all.__conditionExpression
+		if(all.__aliases)
+		    expressionAttributeNames all.__aliases
+		if(all.__params)
+		    expressionAttributeValues wrap(all.__params)
+	    }
+
+	    items << builder(TransactWriteItem) { delete b.build() }.build()
 	}
     }
-
-    private class Read implements ReadTransaction {
-	List<TransactGetItem> items = []
-	
-	void get(String table, Map<String,Object> keys) {
-	    def item = builder(TransactGetItem) {
-		get(getter(Get, table, keys).build())
-	    }
-
-	    items << item.build()
-	}
+    
+    List<Map<String,Object>> readTransaction(Closure config) {
+	final Read read = delegateTo(new Read(), config)
+	final req = builder(TransactGetItemsRequest) { transactItems read.items }.build()
+	client.transactGetItems(req).responses().collect { unwrap(it.item()) }
     }
 
-    private class Write implements WriteTransaction {
-	List<TransactWriteItem> items = []
-	
-	void put(String table, Map<String,Object> keys) {
-	    def item = builder(TransactWriteItem) {
-		put(putter(Put, table, keys).build())
-	    }
+    void writeTransaction(Closure config) {
+	final Write write = delegateTo(new Write(), config)
 
-	    items << item.build()
-	}
-	
-	void upsert(String table, Closure config) {
-	    def item = builder(TransactWriteItem) {
-		update(upserter(Update, table, config).build())
-	    }
-
-	    items << item.build()
-	}
-	
-	void delete(String table, Map<String,Object> keys) {
-	    def item = builder(TransactWriteItem) {
-		delete(deleter(Delete, table, keys).build())
-	    }
-
-	    items << item.build()
-	}
-    }
-
-
-    List<Map<String,Object>> readTransaction(@DelegatesTo(ReadTransaction) Closure config) {
-	final Read read = new Read()
-	config.setDelegate(read)
-	config.setResolveStrategy(Closure.DELEGATE_FIRST)
-	config.call()
-	
-	final tgir = builder(TransactGetItemsRequest) {
-	    transactItems read.items
-	}
-		
-	exec(tgir.build()).responses().collect { unwrap(it.item()) }
-    }
-
-    void writeTransaction(@DelegatesTo(WriteTransaction) Closure config) {
-	final Write write = new Write()
-	config.setDelegate(write)
-	config.setResolveStrategy(Closure.DELEGATE_FIRST)
-	config.call()
-
-	final twir = builder(TransactWriteItemsRequest) {
+	final b = builder(TransactWriteItemsRequest) {
+	    clientRequestToken write.token.toString()
 	    transactItems write.items
 	}
 
-	exec(twir.build())
+	client.transactWriteItems(b.build())
     }
 }

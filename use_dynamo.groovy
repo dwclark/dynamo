@@ -11,46 +11,48 @@ import net.datafaker.Faker
 final Faker faker = new Faker()
 
 def demoSingleKey = { Dynamo dynamo ->
-    final Map customerKey = [customerId: UUID.randomUUID()]
+    final Map customerKey = [customerId: UUID.randomUUID().toString()]
     assert !dynamo.listTables()
 
     //Demo table creation with a single primary key
-    dynamo.createTable("Customers", [entry("customerId", String)])
-
-    //Use the table view to always do work with same table
-    def table = dynamo.forTable("Customers")
+    final Ops.Table table = dynamo.createTable("Customers", [entry("customerId", String)])
 
     //put and get customer data, put is always an insert
-    table.put(customerKey + [name: 'David', address: '123 Main', age: 100])
-    println table.get(customerKey)
+    final Map david = customerKey + [name: 'David', address: '123 Main', age: 100]
+    table.put david
+    assert david == table.get(customerKey)
 
     //show upsert functionality, in this case since the key exists it will
     //be an update. All attributes will be set for the customerKey
+    final Map samAttrs = [name: 'Sam', address: '456 My Way', age: 40]
+    final Map sam = customerKey + samAttrs
     table.upsert {
 	key customerKey
-	attributes name: 'Sam', address: '456 My Way', age: 40
+	attributes samAttrs
     }
-    println table.get(customerKey)
+    assert sam == table.get(customerKey)
 
     //get the same information via the query interface
-    println table.query { keyCondition "${alias(customerId)} = ${customerKey.customerId}" } as List
+    assert sam == table.query { keyCondition "${alias(customerId)} = ${customerKey.customerId}" }[0]
 
     //show usage of upsert to insert a customer
-    final Map upsertKey = [customerId: UUID.randomUUID()]
+    final Map upsertKey = [customerId: UUID.randomUUID().toString()]
+    final Map bennyAttrs = [name: 'Benny', address: '1600 Pennsylvania Ave', age: 65]
+    final Map benny = upsertKey + bennyAttrs
     table.upsert {
 	key upsertKey
-	attributes name: 'Benny', address: '1600 Pennsylvania Ave', age: 65
+	attributes bennyAttrs
     }
-    println table.get(upsertKey)
+    assert benny == table.get(upsertKey)
 
     //Now use upsert as an update
     //Use dynamo update expression to change the name and remove the age attribute
-    final Map lenny = [name: 'Lenny']
+    final Map lenny = benny - [age: 65] + [name: 'Lenny']
     table.upsert {
 	key upsertKey
-	expression "set ${alias(name)} = ${lenny.name} remove ${alias(age)}"
+	upsertExpression "set ${alias(name)} = ${lenny.name} remove ${alias(age)}"
     }
-    println table.get(upsertKey)
+    assert lenny == table.get(upsertKey)
 
     table.delete(customerKey)
     table.delete(upsertKey)
@@ -69,91 +71,103 @@ def demoMultipleKeys = { Dynamo dynamo ->
     def invoices = dynamo.newConversions(Dynamo.NumberConversion.SMALLEST).forTable("Invoices")
 
     //insert some data into the invoices table
-    def invoiceId = UUID.randomUUID()
-    invoices.put(pk: invoiceId, sk: "#d", date: '2025-11-01', terms: 'net 30', customer: 'blue man group')
-    invoices.put(pk: invoiceId, sk: "#li1", quantity: 1, price: 100.25, description: 'blocks')
-    invoices.put(pk: invoiceId, sk: "#li2", quantity: 20, price: 5.05, description: 'stuff')
+    final invoiceId = UUID.randomUUID().toString()
+    final header = [pk: invoiceId, sk: "#d", date: '2025-11-01', terms: 'net 30', customer: 'blue man group']
+    final li1 = [pk: invoiceId, sk: "#li1", quantity: 1, price: 100.25, description: 'blocks']
+    final li2 = [pk: invoiceId, sk: "#li2", quantity: 20, price: 5.05, description: 'stuff']
+    
+    invoices.put header
+    invoices.put li1
+    invoices.put li2
 
     //get a listing of line items for that invoice, along with their prices
     //Note, queries and scans return an iterable because the dataset may be
     //very large. Iterable will automatically paginate results. If you want it
     //all at once, cast the Iterable to a List.
-    def iterable = invoices.query {
+    def iterable = invoices.query { 
 	projection "${alias(sk)}, ${alias(price)}, ${alias(quantity)}"
 	keyCondition "${alias(pk)} = ${invoiceId} AND begins_with(${alias(sk)}, ${'#li'})"
     }
 
     //iterate the results, make sure numeric types have been converted to the smallest representation
-    iterable.each { lineItem ->
-	assert lineItem.quantity instanceof Integer && lineItem.price instanceof BigDecimal
-	println lineItem
+    iterable.each { li ->
+	assert li.quantity instanceof Integer && li.price instanceof BigDecimal
     }
 
+    final shouldBe = [[sk: "#li1", quantity: 1, price: 100.25], [sk: "#li2", quantity: 20, price: 5.05]]
+    assert shouldBe == iterable.sort { f,s -> f.sk <=> s.sk }
+
     //Use the scan functionality to show every item in the invoices table
-    println "doing full invoices scan"
-    invoices.scan().each { println it }
+    assert [header,li1,li2] == invoices.scan().sort { f,s -> f.sk <=> s.sk }
 
     //Use filtering and projection to only retrieve certain attributes
     //where the filter criteria matches
     //This is requires the same work on the server (since all items are scanned),
     //but reduces the I/O since only some items are brought back
-    println "doing filtered scan for expensive line items"
-    invoices.scan {
+    def results = invoices.scan {
 	projection "${alias(quantity)},${alias(price)}"
 	filter "begins_with(${alias(sk)}, ${'#li'}) AND ${alias(price)} > ${20}"
-    }.each {
-	println it
-    }
+    } as List
 
+    assert results && results.size() == 1 && results[0].price == 100.25 && results[0].quantity == 1
     invoices.delete()
 }
 
 def demoTransactions = { Dynamo dynamo ->
+    final faddr = faker.address()
+    final fname = faker.name()
+    
     //create two tables
     //create a table with a primary key and a sort key
     dynamo.createTable("People", [entry("id", String)])
     dynamo.createTable("Addresses", [entry("id", String)])
-
-    final personId = UUID.randomUUID()
-    final addressIds = []
-    final addr = faker.address()
-    final name = faker.name()
+    
+    final personId = UUID.randomUUID().toString()
+    final person = [id: personId, first: fname.firstName(), last: fname.lastName(), ssn: faker.numerify('### ## ####')]
+    final addresses = (0..<5).collect {
+	[id: UUID.randomUUID().toString(), personId: personId, street: faddr.streetAddress(),
+	 city: faddr.city(), state: faddr.stateAbbr(), zip: faddr.zipCode()]
+    }
 
     //Dynamo multi-table/multi-row transaction
     dynamo.writeTransaction {
-	put "People", [id: personId, first: name.firstName(), last: name.lastName(), ssn: faker.numerify('### ## ####')]
-	5.times {
-	    def uuid = UUID.randomUUID()
-	    addressIds << uuid
-	    upsert "Addresses", {
-		key(id: uuid)
-		attributes(personId: personId, street: addr.streetAddress(),
-			   city: addr.city(), state: addr.stateAbbr(),
-			   zip: addr.zipCode())
+	put person, "People"
+	addresses.each { addr ->
+	    def id = addr.id
+	    def attrs = addr - [id: id]
+	    upsert {
+		table 'Addresses'
+		key(id: id)
+		attributes(attrs)
 	    }
 	}
     }
 
-    println "All persons and addresses"
     //Dynamo multi-table/multi-row read transaction
     List<Map<String,Object>> all = dynamo.readTransaction {
-	get 'People', [id: personId]
-	addressIds.each { addrId -> get 'Addresses', [id: addrId] }
+	get 'People', id: personId
+	addresses.each { addr -> get 'Addresses', id: addr.id }
     }
     
-    all.each { println it }
     assert all.size() == 6
+    assert all.collect { it.id } as Set == ([person] + addresses).collect { it.id } as Set
 
-    //Delete first two addresses we created
+    //Delete first two addresses we created, but only if the person has a particular ssn
     dynamo.writeTransaction {
-	delete 'Addresses', [id: addressIds[0]]
-	delete 'Addresses', [id: addressIds[1]]
+	check {
+	    table "People"
+	    key id: personId
+	    conditionExpression "${alias(ssn)} = ${person.ssn}"
+	}
+	
+	delete 'Addresses', id: addresses[0].id
+	delete 'Addresses', id: addresses[1].id
     }
-
+    
     List<Map<String,Object>> reduced = dynamo.readTransaction {
-	addressIds.each { addrId -> get 'Addresses', [id: addrId] }
+	addresses.each { addr -> get 'Addresses', id: addr.id }
     }
-
+    
     //returns empty maps when id is not found, remove empty maps for count
     assert reduced.findAll { it }.size() == 3
 }
@@ -161,7 +175,7 @@ def demoTransactions = { Dynamo dynamo ->
 //Manages a local dynamo environment. If you are hitting an actual Dynamo instance
 //in AWS, you would just configure the client directly
 def builder = DynamoEnvironment.builder().tap {
-    port 12500
+    port 12501
     shared false
     useGrapeClasspath()
 }
