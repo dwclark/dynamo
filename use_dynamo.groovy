@@ -119,8 +119,8 @@ def demoTransactions = { Dynamo dynamo ->
     
     //create two tables
     //create a table with a primary key and a sort key
-    dynamo.createTable("People", [entry("id", String)])
-    dynamo.createTable("Addresses", [entry("id", String)])
+    final peopleTable = dynamo.createTable("People", [entry("id", String)])
+    final addressesTable = dynamo.createTable("Addresses", [entry("id", String)])
     
     final personId = UUID.randomUUID().toString()
     final person = [id: personId, first: fname.firstName(), last: fname.lastName(), ssn: faker.numerify('### ## ####')]
@@ -170,6 +170,21 @@ def demoTransactions = { Dynamo dynamo ->
     
     //returns empty maps when id is not found, remove empty maps for count
     assert reduced.findAll { it }.size() == 3
+
+    peopleTable.delete()
+    addressesTable.delete()
+}
+
+def demoAt = { Dynamo dynamo ->
+    final fname = faker.name()
+    final Ops.Table accounts = dynamo.createTable("Accounts", [entry("id", Number)])
+    (1..10).each { id ->
+	accounts[[id: id]] = [firstName: fname.firstName(), lastName: fname.lastName(), balance: id * 100]
+    }
+
+    (1..10).each { id ->
+	assert accounts[[id: id]].balance == id * 100
+    }
 }
 
 //Manages a local dynamo environment. If you are hitting an actual Dynamo instance
@@ -191,4 +206,5 @@ try(def env = builder.inMemory()) {
     demoSingleKey dynamo
     demoMultipleKeys dynamo
     demoTransactions dynamo
+    demoAt dynamo
 }

@@ -1,4 +1,4 @@
-import groovy.transform.ToString
+pimport groovy.transform.ToString
 
 abstract class Ops {
 
@@ -58,6 +58,15 @@ abstract class Ops {
 	void delete(Map<String,Object> key)
 	void delete(@DelegatesTo(Delete) Closure config)
 	void delete()
+
+	default void putAt(Map<String,Object> keys, Map<String,Object> attrs) {
+	    upsert {
+		key(keys)
+		attributes(attrs)
+	    }
+	}
+
+	default Map<String,Object> getAt(Map<String,Object> keys) { get(keys) }
     }
 
     interface ReadTransaction {
