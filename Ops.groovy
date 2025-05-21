@@ -1,4 +1,4 @@
-pimport groovy.transform.ToString
+import groovy.transform.ToString
 
 abstract class Ops {
 
@@ -8,7 +8,7 @@ abstract class Ops {
     }
 
     interface Check extends Alias {
-	void conditionExpression(GString gstr)
+	void condition(GString gstr)
 	void key(Map<String,Object> val)
 	void table(String val)
     }
@@ -28,7 +28,7 @@ abstract class Ops {
     }
 
     interface Upsert extends Check {
-	void upsertExpression(GString gstr)
+	void expression(GString gstr)
 	void attributes(Map<String,Object> kv)
     }
 
@@ -41,7 +41,7 @@ abstract class Ops {
     }
 
     interface Put extends Alias {
-	void conditionExpression(GString gstr)
+	void condition(GString gstr)
 	void table(String val)
 	void attributes(Map<String,Object> val)
     }
@@ -88,14 +88,14 @@ abstract class Ops {
 	final Map<String,Object> __params = [:]
 	final Map<String,String> __aliases = new IdentityHashMap()
 	int __counter = 0
-	String __conditionExpression
+	String __condition
 	Map<String,Object> __key
 	String __table
 	String __index
 	String __projection
 	String __keyCondition
 	String __filter
-	String __upsertExpression
+	String __expression
 	Map<String,Object> __attributes
 	
 	private String __processExpression(GString gstr) {
@@ -124,8 +124,8 @@ abstract class Ops {
 	    }
 	}
 
-	void conditionExpression(GString gstr) {
-	    __conditionExpression = __processExpression(gstr)
+	void condition(GString gstr) {
+	    __condition = __processExpression(gstr)
 	}
 
 	void key(Map<String,Object> val) {
@@ -152,8 +152,8 @@ abstract class Ops {
 	    __filter = __processExpression(gstr)
 	}
 	
-	void upsertExpression(GString gstr) {
-	    __upsertExpression = __processExpression(gstr)
+	void expression(GString gstr) {
+	    __expression = __processExpression(gstr)
 	}
 	
 	void attributes(Map<String,Object> val) {
@@ -162,7 +162,7 @@ abstract class Ops {
 
 	void convertAttributesToExpression() {
 	    if(__attributes) {
-		__upsertExpression = 'set ' + __attributes.collect { k, v -> "${alias(k)} = :${k}" }.join(', ')
+		__expression = 'set ' + __attributes.collect { k, v -> "${alias(k)} = :${k}" }.join(', ')
 		__attributes.each { k, v -> __params[':' + k] = v }
 	    }
 	}

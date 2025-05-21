@@ -50,7 +50,7 @@ def demoSingleKey = { Dynamo dynamo ->
     final Map lenny = benny - [age: 65] + [name: 'Lenny']
     table.upsert {
 	key upsertKey
-	upsertExpression "set ${alias(name)} = ${lenny.name} remove ${alias(age)}"
+	expression "set ${alias(name)} = ${lenny.name} remove ${alias(age)}"
     }
     assert lenny == table.get(upsertKey)
 
@@ -157,7 +157,7 @@ def demoTransactions = { Dynamo dynamo ->
 	check {
 	    table "People"
 	    key id: personId
-	    conditionExpression "${alias(ssn)} = ${person.ssn}"
+	    condition "${alias(ssn)} = ${person.ssn}"
 	}
 	
 	delete 'Addresses', id: addresses[0].id
@@ -190,7 +190,7 @@ def demoAt = { Dynamo dynamo ->
 //Manages a local dynamo environment. If you are hitting an actual Dynamo instance
 //in AWS, you would just configure the client directly
 def builder = DynamoEnvironment.builder().tap {
-    port 12501
+    port 12500
     shared false
     useGrapeClasspath()
 }

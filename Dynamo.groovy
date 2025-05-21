@@ -186,8 +186,8 @@ class Dynamo {
 	    final Ops.All all = Ops.delegateAll(config)
 	    def req = builder(PutItemRequest) {
 		tableName __table
-		if(all.__conditionExpression)
-		    conditionExpression all.__conditionExpression
+		if(all.__condition)
+		    conditionExpression all.__condition
 		item wrap(all.__attributes)
 		if(all.__aliases)
 		    expressionAttributeNames all.__aliases
@@ -212,8 +212,8 @@ class Dynamo {
 	    def req = builder(GetItemRequest) {
 		tableName __table
 		key wrap(all.__key)
-		if(all.__projectionExpression)
-		    projectionExpression all.__projectionExpression
+		if(all.__projection)
+		    projectionExpression all.__projection
 		if(all.__aliases)
 		    expressionAttributeNames all.__aliases
 		if(all.__params)
@@ -230,9 +230,9 @@ class Dynamo {
 	    final b = builder(UpdateItemRequest) {
 		tableName __table
 		key wrap(all.__key)
-		updateExpression all.__upsertExpression
-		if(all.__conditionExpression)
-		    conditionExpression all.__conditionExpression
+		updateExpression all.__expression
+		if(all.__condition)
+		    conditionExpression all.__condition
 		if(all.__aliases)
 		    expressionAttributeNames(all.__aliases)
 		if(all.__params) {
@@ -301,8 +301,8 @@ class Dynamo {
 	    def req = builder(DeleteItemRequest) {
 		tableName __table
 		key wrap(all.__keys)
-		if(all.__conditionExpression)
-		    conditionExpression all.__conditionExpression
+		if(all.__condition)
+		    conditionExpression all.__condition
 		if(all.__aliases)
 		    expressionAttributeNames(all.__aliases)
 		if(all.__params) {
@@ -380,8 +380,8 @@ class Dynamo {
 	    def ret = builder(Get) {
 		tableName __table
 		key wrap(all.__key)
-		if(all.__projectionExpression)
-		    projectionExpression all.__projectionExpression
+		if(all.__projection)
+		    projectionExpression all.__projection
 		if(all.__aliases)
 		    expressionAttributeNames all.__aliases
 		if(all.__params)
@@ -402,8 +402,8 @@ class Dynamo {
 	    final b = builder(ConditionCheck) {
 		tableName all.__table
 		key wrap(all.__key)
-		if(all.__conditionExpression)
-		    conditionExpression all.__conditionExpression
+		if(all.__condition)
+		    conditionExpression all.__condition
 		if(all.__aliases)
 		    expressionAttributeNames all.__aliases
 		if(all.__params)
@@ -445,9 +445,9 @@ class Dynamo {
 	    final b = builder(Update) {
 		tableName all.__table
 		key wrap(all.__key)
-		updateExpression all.__upsertExpression
-		if(all.__conditionExpression)
-		    conditionExpression all.__conditionExpression
+		updateExpression all.__expression
+		if(all.__condition)
+		    conditionExpression all.__condition
 		if(all.__aliases)
 		    expressionAttributeNames all.__aliases
 		if(all.__params)
@@ -471,8 +471,8 @@ class Dynamo {
 	    final b = builder(Delete) {
 		tableName all.__table
 		key wrap(all.__key)
-		if(all.__conditionExpression)
-		    conditionExpression all.__conditionExpression
+		if(all.__condition)
+		    conditionExpression all.__condition
 		if(all.__aliases)
 		    expressionAttributeNames all.__aliases
 		if(all.__params)
