@@ -7,6 +7,7 @@
 @Grab('net.datafaker:datafaker:2.4.3')
 import static java.util.Map.entry
 import net.datafaker.Faker
+import software.amazon.awssdk.services.dynamodb.model.TransactionCanceledException
 
 final Faker faker = new Faker()
 
@@ -33,7 +34,7 @@ def demoSingleKey = { Dynamo dynamo ->
     assert sam == table.get(customerKey)
 
     //get the same information via the query interface
-    assert sam == table.query { keyCondition "${alias(customerId)} = ${customerKey.customerId}" }[0]
+    assert sam == table.query { keyCondition "${alias('customerId')} = ${customerKey.customerId}" }[0]
 
     //show usage of upsert to insert a customer
     final Map upsertKey = [customerId: UUID.randomUUID().toString()]
@@ -50,7 +51,7 @@ def demoSingleKey = { Dynamo dynamo ->
     final Map lenny = benny - [age: 65] + [name: 'Lenny']
     table.upsert {
 	key upsertKey
-	expression "set ${alias(name)} = ${lenny.name} remove ${alias(age)}"
+	expression "set ${alias('name')} = ${lenny.name} remove ${alias('age')}"
     }
     assert lenny == table.get(upsertKey)
 
@@ -85,8 +86,8 @@ def demoMultipleKeys = { Dynamo dynamo ->
     //very large. Iterable will automatically paginate results. If you want it
     //all at once, cast the Iterable to a List.
     def iterable = invoices.query { 
-	projection "${alias(sk)}, ${alias(price)}, ${alias(quantity)}"
-	keyCondition "${alias(pk)} = ${invoiceId} AND begins_with(${alias(sk)}, ${'#li'})"
+	projection "${alias('sk')}, ${alias('price')}, ${alias('quantity')}"
+	keyCondition "${alias('pk')} = ${invoiceId} AND begins_with(${alias('sk')}, ${'#li'})"
     }
 
     //iterate the results, make sure numeric types have been converted to the smallest representation
@@ -105,8 +106,8 @@ def demoMultipleKeys = { Dynamo dynamo ->
     //This is requires the same work on the server (since all items are scanned),
     //but reduces the I/O since only some items are brought back
     def results = invoices.scan {
-	projection "${alias(quantity)},${alias(price)}"
-	filter "begins_with(${alias(sk)}, ${'#li'}) AND ${alias(price)} > ${20}"
+	projection "${alias('quantity')},${alias('price')}"
+	filter "begins_with(${alias('sk')}, ${'#li'}) AND ${alias('price')} > ${20}"
     } as List
 
     assert results && results.size() == 1 && results[0].price == 100.25 && results[0].quantity == 1
@@ -157,7 +158,7 @@ def demoTransactions = { Dynamo dynamo ->
 	check {
 	    table "People"
 	    key id: personId
-	    condition "${alias(ssn)} = ${person.ssn}"
+	    condition "${alias('ssn')} = ${person.ssn}"
 	}
 	
 	delete 'Addresses', id: addresses[0].id
@@ -170,7 +171,7 @@ def demoTransactions = { Dynamo dynamo ->
     
     //returns empty maps when id is not found, remove empty maps for count
     assert reduced.findAll { it }.size() == 3
-
+    
     peopleTable.delete()
     addressesTable.delete()
 }
@@ -185,6 +186,49 @@ def demoAt = { Dynamo dynamo ->
     (1..10).each { id ->
 	assert accounts[[id: id]].balance == id * 100
     }
+}
+
+def demoExactlyOnce = { Dynamo dynamo ->
+    final Ops.Table events = dynamo.createTable("Events", [entry("id", String)])
+    final Ops.Table customers = dynamo.createTable("Customers", [entry("id", String)])
+    
+    final String customerId = UUID.randomUUID().toString()
+    final List eventIds = (0..1).collect { UUID.randomUUID().toString() }
+    final List toProcess = [[eventId: eventIds[0], customerId: customerId, first: 'Scooby', last: 'Doo', type: 'add'],
+			    [eventId: eventIds[1], customerId: customerId, first: 'Scrappy', last: 'Doo', type: 'change'],
+			    [eventId: eventIds[0], customerId: customerId, first: 'Scooby', last: 'Doo', type: 'add']]
+
+    def save = { event ->
+	dynamo.writeTransaction {
+	    upsert {
+		table 'Customers'
+		key id: event.customerId
+		attributes event.subMap('first', 'last')
+	    }
+
+	    put {
+		table 'Events'
+		attributes id: event.eventId, type: event.type
+		condition "attribute_not_exists(${alias('id')})"
+	    }
+	}
+    }
+
+    save(toProcess[0])
+    save(toProcess[1])
+    
+    try {
+	save(toProcess[2])
+	assert false
+    }
+    catch(software.amazon.awssdk.services.dynamodb.model.TransactionCanceledException tce) {
+	assert true
+    }
+	
+
+    assert events.scan().size() == 2
+    assert customers.scan().size() == 1
+    assert customers[[id: customerId]].first == 'Scrappy'
 }
 
 //Manages a local dynamo environment. If you are hitting an actual Dynamo instance
@@ -207,4 +251,5 @@ try(def env = builder.inMemory()) {
     demoMultipleKeys dynamo
     demoTransactions dynamo
     demoAt dynamo
+    demoExactlyOnce dynamo
 }

@@ -427,8 +427,8 @@ class Dynamo {
 	    final b = builder(Put) {
 		tableName all.__table
 		item wrap(all.__attributes)
-		if(all.__projection)
-		    projectionExpression all._projection
+		if(all.__condition)
+		    conditionExpression all.__condition
 		if(all.__aliases)
 		    expressionAttributeNames all.__aliases
 		if(all.__params)

@@ -3,7 +3,6 @@ import groovy.transform.ToString
 abstract class Ops {
 
     interface Alias {
-	String get(String missing)
 	String alias(String val)
     }
 
@@ -109,8 +108,6 @@ abstract class Ops {
 	    
 	    return gstr.toString()
 	}
-	
-	String get(String missing) { return missing }
 	
 	String alias(String val) {
 	    final String found = __aliases.findResult { alias, v -> (v == val) ? alias : null }
