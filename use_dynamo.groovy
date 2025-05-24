@@ -8,6 +8,7 @@
 import static java.util.Map.entry
 import net.datafaker.Faker
 import software.amazon.awssdk.services.dynamodb.model.TransactionCanceledException
+import java.util.function.Consumer
 
 final Faker faker = new Faker()
 
@@ -229,12 +230,67 @@ def demoExactlyOnce = { Dynamo dynamo ->
     assert events.scan().size() == 2
     assert customers.scan().size() == 1
     assert customers[[id: customerId]].first == 'Scrappy'
+
+    eventIds.each { id -> events.delete(id: id) }
+    customers.delete(id: customerId)
+    assert events.scan().size() == 0
+    assert customers.scan().size() == 0
 }
+
+def demoExactlyOnceJava = { Dynamo dynamo ->
+    final Ops.Table events = dynamo.forTable("Events")
+    final Ops.Table customers = dynamo.forTable("Customers")
+    
+    final String customerId = UUID.randomUUID().toString()
+    final List eventIds = (0..1).collect { UUID.randomUUID().toString() }
+    final List toProcess = [[eventId: eventIds[0], customerId: customerId, first: 'Scooby', last: 'Doo', type: 'add'],
+			    [eventId: eventIds[1], customerId: customerId, first: 'Scrappy', last: 'Doo', type: 'change'],
+			    [eventId: eventIds[0], customerId: customerId, first: 'Scooby', last: 'Doo', type: 'add']]
+
+    def save = { event ->
+	dynamo.writeTransaction(new Consumer<Ops.WriteTransaction>() {
+	    void accept(Ops.WriteTransaction tran) {
+		tran.upsert(new Consumer<Ops.Put>() {
+		    void accept(Ops.Put p) {
+			p.table('Customers')
+			p.key(Map.of('id', event.customerId))
+			p.attributes(event.subMap('first', 'last'))
+		    }
+		})
+		
+		tran.put(new Consumer<Ops.Upsert>() {
+		    void accept(Ops.Upsert u) {
+			u.table('Events')
+			u.attributes(Map.of('id', event.eventId, 'type', event.type))
+			u.condition('attribute_not_exists({})', u.alias('id'))
+		    }
+		})
+	    }
+	})
+    }
+
+    save(toProcess[0])
+    save(toProcess[1])
+    
+    try {
+	save(toProcess[2])
+	assert false
+    }
+    catch(software.amazon.awssdk.services.dynamodb.model.TransactionCanceledException tce) {
+	assert true
+    }
+	
+
+    assert events.scan().size() == 2
+    assert customers.scan().size() == 1
+    assert customers[[id: customerId]].first == 'Scrappy'
+}
+
 
 //Manages a local dynamo environment. If you are hitting an actual Dynamo instance
 //in AWS, you would just configure the client directly
 def builder = DynamoEnvironment.builder().tap {
-    port 12500
+    port 12501
     shared false
     useGrapeClasspath()
 }
@@ -252,4 +308,5 @@ try(def env = builder.inMemory()) {
     demoTransactions dynamo
     demoAt dynamo
     demoExactlyOnce dynamo
+    demoExactlyOnceJava dynamo
 }

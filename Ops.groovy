@@ -1,15 +1,36 @@
 import groovy.transform.ToString
+import java.util.function.Consumer
 
+//TODO: finish java methods for table and transaction types
 abstract class Ops {
-
+    
+    private static class JavaGstr extends GString {
+	private final String[] strs
+	
+	JavaGstr(String[] strs, Object[] args) {
+	    super(args)
+	    this.strs = strs
+	}
+	
+	String[] getStrings() { strs }
+    }
+    
+    static GString toGstr(final String template, Object[] args) {
+	new JavaGstr(template.split(/\{\}/), args)
+    }
+    
     interface Alias {
 	String alias(String val)
     }
 
     interface Check extends Alias {
-	void condition(GString gstr)
+	void condition(GString gstr)	
 	void key(Map<String,Object> val)
 	void table(String val)
+
+	default void condition(String template, Object[] args) {
+	    condition(Ops.toGStr(template, args))
+	}
     }
 
     interface Query extends Alias {
@@ -17,6 +38,14 @@ abstract class Ops {
 	void keyCondition(GString gstr)
 	void table(String val)
 	void index(String val)
+
+	default void projection(String template, Object[] args) {
+	    projection(Ops.toGStr(template, args))
+	}
+
+	default void keyCondition(String template, Object[] args) {
+	    keyCondition(Ops.toGStr(template, args))
+	}
     }
 
     interface Scan extends Alias {
@@ -24,11 +53,23 @@ abstract class Ops {
 	void filter(GString gstr)
 	void index(String val)
 	void table(String val)
-    }
 
+	default void projection(String template, Object[] args) {
+	    projection(Ops.toGStr(template, args))
+	}
+
+	default void filter(String template, Object[] args) {
+	    filter(Ops.toGStr(template, args))
+	}
+    }
+    
     interface Upsert extends Check {
 	void expression(GString gstr)
 	void attributes(Map<String,Object> kv)
+
+	default void expression(String template, Object[] args) {
+	    expression(Ops.toGstr(template, args))
+	}
     }
 
     interface Delete extends Check {}
@@ -37,12 +78,20 @@ abstract class Ops {
 	void projection(GString gstr)
 	void key(Map<String,Object> val)
 	void table(String name)
+
+	default void projection(String template, Object[] args) {
+	    projection(Ops.toGStr(template, args))
+	}
     }
 
     interface Put extends Alias {
 	void condition(GString gstr)
 	void table(String val)
 	void attributes(Map<String,Object> val)
+
+	default void condition(String template, Object[] args) {
+	    condition(Ops.toGstr(template, args))
+	}
     }
     
     interface Table {
@@ -75,9 +124,12 @@ abstract class Ops {
 
     interface WriteTransaction {
 	void check(@DelegatesTo(Check) Closure config)
+	void check(Consumer<Check> consumer)
 	void put(Map<String,Object> map, String table)
 	void put(@DelegatesTo(Put) Closure config)
+	void put(Consumer<Put> consumer)
 	void upsert(@DelegatesTo(Upsert) Closure config)
+	void upsert(Consumer<Upsert> consumer)
 	void delete(Map<String,Object> key, String table)
 	void delete(@DelegatesTo(Delete) Closure config)
     }
@@ -85,6 +137,11 @@ abstract class Ops {
     @ToString(includeNames=true)
     static class All implements Alias, Check, Query, Scan, Upsert, Delete, Get, Put {
 	final Map<String,Object> __params = [:]
+	//why IdentityHashMap? Because we need a way to make keep aliases
+	//separate from parameters. Because we freshly construct
+	//an uninterned string for each alias, each alias is guaranteed to
+	//be identical with no other string running in the jvm.
+	//Hence, IdentityHashMap can always separate aliases from other strings
 	final Map<String,String> __aliases = new IdentityHashMap()
 	int __counter = 0
 	String __condition
@@ -157,11 +214,13 @@ abstract class Ops {
 	    __attributes = val
 	}
 
-	void convertAttributesToExpression() {
+	All convertAttributesToExpression() {
 	    if(__attributes) {
 		__expression = 'set ' + __attributes.collect { k, v -> "${alias(k)} = :${k}" }.join(', ')
 		__attributes.each { k, v -> __params[':' + k] = v }
 	    }
+
+	    return this
 	}
     }
 
@@ -170,6 +229,12 @@ abstract class Ops {
 	config.setDelegate(all)
 	config.setResolveStrategy(Closure.DELEGATE_FIRST)
 	config.call()
+	return all
+    }
+
+    static All noDelegate(Consumer consumer) {
+	final All all = new All()
+	consumer.accept(all)
 	return all
     }
 }

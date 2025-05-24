@@ -1,3 +1,4 @@
+import java.util.function.Consumer
 import java.nio.ByteBuffer
 import java.util.Map.Entry
 import software.amazon.awssdk.core.SdkBytes
@@ -396,9 +397,7 @@ class Dynamo {
 	final List<TransactWriteItem> items = []
 	final UUID token = UUID.randomUUID()
 
-	void check(Closure config) {
-	    final Ops.All all = Ops.delegateAll(config)
-	    
+	private void _check(Ops.All all) {
 	    final b = builder(ConditionCheck) {
 		tableName all.__table
 		key wrap(all.__key)
@@ -411,6 +410,15 @@ class Dynamo {
 	    }
 
 	    items << builder(TransactWriteItem) { conditionCheck b.build() }.build()
+
+	}
+	
+	void check(Closure config) {
+	    _check(Ops.delegateAll(config))
+	}
+
+	void check(Consumer<Ops.Check> consumer) {
+	    _check(Ops.noDelegate(consumer))
 	}
 	
 	void put(Map<String,Object> map, String table) {
@@ -421,9 +429,8 @@ class Dynamo {
 
 	    items << builder(TransactWriteItem) { put b.build() }.build()
 	}
-	
-	void put(Closure config) {
-	    final Ops.All all = Ops.delegateAll(config)
+
+	private void _put(Ops.All all) {
 	    final b = builder(Put) {
 		tableName all.__table
 		item wrap(all.__attributes)
@@ -438,10 +445,16 @@ class Dynamo {
 	    items << builder(TransactWriteItem) { put b.build() }.build()
 	}
 	
-	void upsert(Closure config) {
-	    final Ops.All all = Ops.delegateAll(config)
-	    all.convertAttributesToExpression()
+	void put(Closure config) {
+	    _put(Ops.delegateAll(config))
+	    
+	}
 
+	void put(Consumer<Ops.Put> consumer) {
+	    _put(Ops.noDelegate(consumer))
+	}
+
+	private void _upsert(Ops.All all) {
 	    final b = builder(Update) {
 		tableName all.__table
 		key wrap(all.__key)
@@ -453,8 +466,16 @@ class Dynamo {
 		if(all.__params)
 		    expressionAttributeValues wrap(all.__params)
 	    }
-
+	    
 	    items << builder(TransactWriteItem) { update b.build() }.build()
+	}
+
+	void upsert(Consumer<Ops.Upsert> consumer) {
+	    _upsert(Ops.noDelegate(consumer).convertAttributesToExpression())
+	}
+	
+	void upsert(Closure config) {
+	    _upsert(Ops.delegateAll(config).convertAttributesToExpression())
 	}
 	
 	void delete(Map<String,Object> keys, String table) {
@@ -489,14 +510,22 @@ class Dynamo {
 	client.transactGetItems(req).responses().collect { unwrap(it.item()) }
     }
 
-    void writeTransaction(Closure config) {
-	final Write write = delegateTo(new Write(), config)
-
+    void _writeTransaction(Write write) {
 	final b = builder(TransactWriteItemsRequest) {
 	    clientRequestToken write.token.toString()
 	    transactItems write.items
 	}
-
+	
 	client.transactWriteItems(b.build())
+    }
+    
+    void writeTransaction(Closure config) {
+	_writeTransaction(delegateTo(new Write(), config))
+    }
+
+    void writeTransaction(Consumer<Ops.WriteTransaction> consumer) {
+	final Write write = new Write()
+	consumer.accept(write)
+	_writeTransaction(write)
     }
 }
