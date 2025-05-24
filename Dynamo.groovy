@@ -182,9 +182,8 @@ class Dynamo {
 
 	    client.putItem(req.build())
 	}
-	
-	void put(Closure config) {
-	    final Ops.All all = Ops.delegateAll(config)
+
+	private void _put(Ops.All all) {
 	    def req = builder(PutItemRequest) {
 		tableName __table
 		if(all.__condition)
@@ -199,6 +198,14 @@ class Dynamo {
 	    client.putItem(req.build())
 	}
 	
+	void put(Closure config) {
+	    _put(Ops.delegateAll(config))
+	}
+
+	void put(Consumer<Ops.Put> config) {
+	    _put(Ops.noDelegate(config))
+	}
+	
 	Map<String,Object> get(Map<String,Object> keys) {
 	    def req = builder(GetItemRequest) {
 		tableName __table
@@ -208,8 +215,7 @@ class Dynamo {
 	    unwrap(client.getItem(req.build()).item())
 	}
 
-	Map<String,Object> get(Closure config) {
-	    Ops.All all = Ops.delegateAll(config)
+	private Map<String,Object> _get(Ops.All all) {
 	    def req = builder(GetItemRequest) {
 		tableName __table
 		key wrap(all.__key)
@@ -223,11 +229,18 @@ class Dynamo {
 
 	    unwrap(client.getItem(req.build()).items())
 	}
-	
-	void upsert(Closure config) {
-	    final Ops.All all = Ops.delegateAll(config)
-	    all.convertAttributesToExpression()
 
+	Map<String,Object> get(Closure config) {
+	    _get(Ops.delegateAll(config))
+	}
+
+	Map<String,Object> get(Consumer<Ops.Get> config) {
+	    _get(Ops.noDelegate(config))
+	}
+
+	private void _upsert(Ops.All all) {
+	    all.convertAttributesToExpression()
+	    
 	    final b = builder(UpdateItemRequest) {
 		tableName __table
 		key wrap(all.__key)
@@ -244,9 +257,15 @@ class Dynamo {
 	    client.updateItem(b.build())
 	}
 	
-	Iterable<Map<String,Object>> query(Closure config) {
-	    final Ops.All all = Ops.delegateAll(config)
-	
+	void upsert(Closure config) {
+	    _upsert(Ops.delegateAll(config))
+	}
+
+	void upsert(Consumer<Ops.Upsert> config) {
+	    _upsert(Ops.noDelegate(config))
+	}
+
+	private Iterable<Map<String,Object>> _query(Ops.All all) {
 	    def req = builder(QueryRequest) {
 		tableName __table
 		keyConditionExpression all.__keyCondition
@@ -263,13 +282,19 @@ class Dynamo {
 	    return new DynamoIterable(client.queryPaginator(req.build()).items())
 	}
 	
+	Iterable<Map<String,Object>> query(Closure config) {
+	    _query(Ops.delegateAll(config))
+	}
+
+	Iterable<Map<String,Object>> query(Consumer<Ops.Query> config) {
+	    _query(Ops.noDelegate(config))
+	}
+	
 	Iterable<Map<String,Object>> scan() {
 	    return scan { -> }
 	}
 
-	Iterable<Map<String,Object>> scan(Closure config) {
-	    final Ops.All all = Ops.delegateAll(config)
-	
+	private Iterable<Map<String,Object>> _scan(Ops.All all) {
 	    def req = builder(ScanRequest) {
 		tableName __table
 		if(all.__index)
@@ -286,6 +311,14 @@ class Dynamo {
 
 	    return new DynamoIterable(client.scanPaginator(req.build()).items())
 	}
+	
+	Iterable<Map<String,Object>> scan(Closure config) {
+	    _scan(Ops.delegateAll(config))
+	}
+
+	Iterable<Map<String,Object>> scan(Consumer<Ops.Scan> config) {
+	    _scan(Ops.noDelegate(config))
+	}
 
 	void delete(Map<String,Object> keys) {
 	    def req = builder(DeleteItemRequest) {
@@ -295,10 +328,8 @@ class Dynamo {
 
 	    client.deleteItem(req.build())
 	}
-
-	void delete(Closure config) {
-	    final Ops.All all = Ops.delegateAll(config)
-	    
+	
+	private void _delete(Ops.All all) {
 	    def req = builder(DeleteItemRequest) {
 		tableName __table
 		key wrap(all.__keys)
@@ -312,6 +343,14 @@ class Dynamo {
 	    }
 	    
 	    client.deleteItem(req.build())
+	}
+
+	void delete(Closure config) {
+	    _delete(Ops.delegateAll(config))
+	}
+
+	void delete(Consumer<Ops.Delete> config) {
+	    _delete(Ops.noDelegate(config))
 	}
 
 	void delete() {
@@ -375,9 +414,8 @@ class Dynamo {
 	    
 	    items << builder(TransactGetItem) { get req.build() }.build()
 	}
-	
-	void get(Closure config) {
-	    final Ops.All all = Ops.delegateAll(config)
+
+	void _get(Ops.All all) {
 	    def ret = builder(Get) {
 		tableName __table
 		key wrap(all.__key)
@@ -390,6 +428,14 @@ class Dynamo {
 	    }
 
 	    items << builder(TransactGetItem) { get req.build() }.build()
+	}
+	
+	void get(Closure config) {
+	    _get(Ops.delegateAll(config))
+	}
+
+	void get(Consumer<Ops.Get> consumer) {
+	    _get(Ops.noDelegate(consumer))
 	}
     }
 
@@ -486,9 +532,8 @@ class Dynamo {
 
 	    items << builder(TransactWriteItem) { delete b.build() }.build()
 	}
-	
-	void delete(Closure config) {
-	    final Ops.All all = Ops.delegateAll(config)
+
+	private void _delete(Ops.All all) {
 	    final b = builder(Delete) {
 		tableName all.__table
 		key wrap(all.__key)
@@ -502,15 +547,32 @@ class Dynamo {
 
 	    items << builder(TransactWriteItem) { delete b.build() }.build()
 	}
+	
+	void delete(Closure config) {
+	    _put(Ops.delegateAll(config))
+	}
+	
+	void delete(Consumer<Ops.Delete> consumer) {
+	    _delete(Ops.noDelegate(consumer))
+	}
     }
-    
-    List<Map<String,Object>> readTransaction(Closure config) {
-	final Read read = delegateTo(new Read(), config)
+
+    List<Map<String,Object>> _readTransaction(Read read) {
 	final req = builder(TransactGetItemsRequest) { transactItems read.items }.build()
 	client.transactGetItems(req).responses().collect { unwrap(it.item()) }
     }
+    
+    List<Map<String,Object>> readTransaction(@DelegatesTo(Ops.ReadTransaction) Closure config) {
+	_readTransaction(delegateTo(new Read(), config))
+    }
 
-    void _writeTransaction(Write write) {
+    List<Map<String,Object>> readTransaction(Consumer<Ops.ReadTransaction> config) {
+	final Read read = new Read()
+	config.accept(read)
+	_readTransaction(read)
+    }
+    
+    private void _writeTransaction(Write write) {
 	final b = builder(TransactWriteItemsRequest) {
 	    clientRequestToken write.token.toString()
 	    transactItems write.items
@@ -519,7 +581,7 @@ class Dynamo {
 	client.transactWriteItems(b.build())
     }
     
-    void writeTransaction(Closure config) {
+    void writeTransaction(@DelegatesTo(Ops.WriteTransaction) Closure config) {
 	_writeTransaction(delegateTo(new Write(), config))
     }
 
